@@ -44,15 +44,15 @@ class environment():
     
     def init_pose(self):
         # Init head pose
-        head = [0.0, 0.0]
-        self._move_joints_to_target(self.interface.head, head)
+        self.head_init_pos = [0.0, 0.0]
+        self._move_joints_to_target(self.interface.head, self.head_init_pos)
 
         # Init leg pose
-        leg = [0.43, 1.48, 1.07, 0.0]
-        self._move_joints_to_target(self.interface.leg, leg)
+        self.leg_init_pos = [0.43, 1.48, 1.07, 0.0]
+        self._move_joints_to_target(self.interface.leg, self.leg_init_pos)
 
         # Init left arm pose
-        left_arm = [
+        self.left_arm_init_pos = [
             0.058147381991147995,
             1.4785659313201904,
             -0.0999724417924881,
@@ -61,10 +61,10 @@ class environment():
             -0.009971064515411854,
             1.0999830961227417,
         ]
-        self._move_joints_to_target(self.interface.left_arm, left_arm)
+        self._move_joints_to_target(self.interface.left_arm, self.left_arm_init_pos)
 
         # Init right arm pose
-        right_arm = [
+        self.right_arm_init_pos = [
             -0.058147381991147995,
             -1.4785659313201904,
             0.0999724417924881,
@@ -73,7 +73,7 @@ class environment():
             0.009971064515411854,
             -1.0999830961227417,
         ]
-        self._move_joints_to_target(self.interface.right_arm, right_arm)
+        self._move_joints_to_target(self.interface.right_arm, self.right_arm_init_pos)
     
     def init_interface(self):
         galbot_interface_config = GalbotInterfaceConfig()
@@ -135,11 +135,28 @@ class environment():
         self.interface = galbot_interface
 
     def _move_joints_to_target(self, module, target_positions, steps=200):
-        """Move joints from current position to target position smoothly."""
         current_positions = module.get_joint_positions()
         positions = interpolate_joint_positions(current_positions, target_positions, steps)
         joint_trajectory = JointTrajectory(positions=np.array(positions))
         module.follow_trajectory(joint_trajectory)
+
+    def check_movement_complete(self, target, threshold):
+        current_joint_positions = self.interface.chassis.get_joint_positions()
+        distance = np.linalg.norm(np.array(current_joint_positions) - np.array(target))
+        return distance < threshold
+
+    def moveGeneric(self, target):
+        self.moving = True
+        current_joint_positions = self.interface.chassis.get_joint_positions()
+        target_joint_positions = [target[0], target[1], target[2]]
+        positions = interpolate_joint_positions(
+            current_joint_positions, target_joint_positions, 200
+        )
+        # Create a joint trajectory
+        joint_trajectory = JointTrajectory(positions=positions)
+
+        # Follow the trajectory
+        self.interface.chassis.follow_trajectory(joint_trajectory)
 
     def follow_path_callback(self):
         if (len(self.fifoPath) != 0):
@@ -149,32 +166,57 @@ class environment():
                 self.fifoPath.pop(0)
                 self.moving = False
 
-                if (len(self.fifoPath) == 0):
+                if (len(self.fifoPath) != 0):
                     target = self.fifoPath[0]
                     self.moveGeneric(target)
                     self.moving = True
 
-    def moveGeneric(self, target):
-        """Move the robot to a target position."""
-        current_joint_positions = self.interface.chassis.get_joint_positions()
-        target_joint_positions = [target[0], target[1], target[2]]
-        positions = interpolate_joint_positions(
-            current_joint_positions, target_joint_positions, 5000
+    def if_pose_initialized_callback(self):
+        left_arm_ready = np.allclose(
+            self.interface.left_arm.get_joint_positions(), 
+            self.left_arm_init_pos, 
+            atol=0.1
         )
-        # Create a joint trajectory
-        joint_trajectory = JointTrajectory(positions=positions)
-
-        # Follow the trajectory
-        self.galbot_interface.chassis.follow_trajectory(joint_trajectory)
+        right_arm_ready = np.allclose(
+            self.interface.right_arm.get_joint_positions(), 
+            self.right_arm_init_pos, 
+            atol=0.1
+        )
+        leg_ready = np.allclose(
+            self.interface.leg.get_joint_positions(), 
+            self.leg_init_pos, 
+            atol=0.1
+        )
+        head_ready = np.allclose(
+            self.interface.head.get_joint_positions(), 
+            self.head_init_pos, 
+            atol=0.1
+        )
         
+        # All parts must be in position for initialization to be complete
+        if left_arm_ready and right_arm_ready and leg_ready and head_ready:
+            self.pose_initialized = True
+
+    # TODO: write Walk in 4 directions and yaw rotation left/right
+ 
     def main(self):
 
         self.setup_sim()
         self.init_interface()
         # Start the simulation
 
+        self.pose_initialized = False
         self.init_pose()
         self.init_scene()
+
+        self.simulator.add_physics_callback("init_pose_callback", self.if_pose_initialized_callback)
+        while not self.pose_initialized:
+            self.simulator.step()
+        self.simulator.add_physics_callback("follow_path_callback", self.follow_path_callback)
+        self.moving = False
+        self.fifoPath = [[0, 0, 0], [1, 6, 1.5], 0]
+        self.simulator.remove_physics_callback("init_pose_callback") # save compute
+        
         self.simulator.step()
 
         # # Get current joint positions
@@ -192,12 +234,6 @@ class environment():
 
         # # Follow the trajectory
         # self.galbot_interface.chassis.follow_trajectory(joint_trajectory)
-
-        # action fifo queue
-        self.simulator.add_physics_callback("follow_path_callback", self.follow_path_callback)
-        self.moving = False
-        self.fifoPath = [[0, 0, 0], [1, 6, 1.5], 0]
-
 
         # Run the display loop
         while True:
