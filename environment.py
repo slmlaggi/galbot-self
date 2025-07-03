@@ -158,6 +158,42 @@ class environment():
         # Follow the trajectory
         self.interface.chassis.follow_trajectory(joint_trajectory)
 
+    def moveForward(self, step):
+        target = [0, step, 0]
+        self.moveGeneric(target)
+
+    def moveBackward(self, step):
+        target = [0, -step, 0]
+        self.moveGeneric(target)
+
+    def moveLeft(self, step):
+        target = [-step, 0, 0]
+        self.moveGeneric(target)
+    
+    def moveRight(self, step):
+        target = [step, 0, 0]
+        self.moveGeneric(target)
+
+    def moveYawLeft(self, step):
+        current_joint_positions = self.interface.chassis.get_joint_positions()
+        target_joint_positions = [current_joint_positions[0], current_joint_positions[1], current_joint_positions[2] + step]
+        positions = interpolate_joint_positions(
+            current_joint_positions, target_joint_positions, 200
+        )
+        joint_trajectory = JointTrajectory(positions=positions)
+
+        self.interface.chassis.follow_trajectory(joint_trajectory)
+
+    def moveYawRight(self, step):
+        current_joint_positions = self.interface.chassis.get_joint_positions()
+        target_joint_positions = [current_joint_positions[0], current_joint_positions[1], current_joint_positions[2] - step]
+        positions = interpolate_joint_positions(
+            current_joint_positions, target_joint_positions, 200
+        )
+        joint_trajectory = JointTrajectory(positions=positions)
+
+        self.interface.chassis.follow_trajectory(joint_trajectory)
+
     def follow_path_callback(self):
         if (len(self.fifoPath) != 0):
 
@@ -169,6 +205,7 @@ class environment():
                 if (len(self.fifoPath) != 0):
                     target = self.fifoPath[0]
                     self.moveGeneric(target)
+                    # self.moveYawLeft(10)
                     self.moving = True
 
     def if_pose_initialized_callback(self):
@@ -218,22 +255,6 @@ class environment():
         self.simulator.remove_physics_callback("init_pose_callback") # save compute
         
         self.simulator.step()
-
-        # # Get current joint positions
-        # current_joint_positions = self.galbot_interface.chassis.get_joint_positions() # intially [0, 0, 0] ([x,y,yaw], add z in more dimensions)
-
-        # # Define target joint positions
-        # target_joint_positions = [1, 6, 1.5]
-
-        # # Interpolate joint positions
-        # positions = interpolate_joint_positions(
-        #     current_joint_positions, target_joint_positions, 5000
-        # )
-        # # Create a joint trajectory
-        # joint_trajectory = JointTrajectory(positions=positions)
-
-        # # Follow the trajectory
-        # self.galbot_interface.chassis.follow_trajectory(joint_trajectory)
 
         # Run the display loop
         while True:
