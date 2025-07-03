@@ -1,8 +1,15 @@
 from physics_simulator import PhysicsSimulator
 from physics_simulator.galbot_interface import GalbotInterface, GalbotInterfaceConfig
 from physics_simulator.utils.data_types import JointTrajectory
-from synthnova_config import PhysicsSimulatorConfig, RobotConfig
+from synthnova_config import (
+    PhysicsSimulatorConfig, RobotConfig, 
+    RgbCameraConfig, RealsenseD435RgbSensorConfig,
+    DepthCameraConfig, RealsenseD435DepthSensorConfig
+)
+from physics_simulator.utils import preprocess_depth
 import numpy as np
+import os
+import cv2
 
 from pathlib import Path
 
@@ -35,6 +42,27 @@ class environment():
             orientation=[0, 0, 0, 1]
         )
         self.robot_path = self.simulator.add_robot(self.robot_config)
+
+        # Setup cameras and interface (similar to previous methods)
+        self.rgb_config = RgbCameraConfig(
+            name="front_head_rgb_camera",
+            prim_path=os.path.join(self.robot_path, "head_link2", "head_end_effector_mount_link", "front_head_rgb_camera"),
+            translation=[0.09321, -0.06166, 0.033],
+            rotation=[0.683012701855461, 0.1830127020294028, 0.18301270202940284, 0.6830127018554611],
+            sensor_config=RealsenseD435RgbSensorConfig(),
+            parent_entity_name="galbot_one_charlie/head_end_effector_mount_link"
+        )
+        self.rgb_path = self.simulator.add_sensor(self.rgb_config)
+        
+        self.depth_config = DepthCameraConfig(
+            name="front_head_depth_camera",
+            prim_path=os.path.join(self.robot_path, "head_link2", "head_end_effector_mount_link", "front_head_depth_camera"),
+            translation=[0.09321, -0.06166, 0.033],
+            rotation=[0.683012701855461, 0.1830127020294028, 0.18301270202940284, 0.6830127018554611],
+            sensor_config=RealsenseD435DepthSensorConfig(),
+            parent_entity_name="galbot_one_charlie/head_end_effector_mount_link"
+        )
+        self.depth_path = self.simulator.add_sensor(self.depth_config)
 
         # Initialize the simulator
         self.simulator.initialize()
@@ -79,6 +107,8 @@ class environment():
         galbot_interface_config = GalbotInterfaceConfig()
 
         galbot_interface_config.robot.prim_path = "/World/Galbot"
+        galbot_interface_config.front_head_camera.prim_path_rgb = self.rgb_path
+        galbot_interface_config.front_head_camera.prim_path_depth = self.depth_path
 
         robot_name = "galbot_one_charlie"
         # Enable modules
@@ -87,6 +117,7 @@ class environment():
         galbot_interface_config.modules_manager.enabled_modules.append("leg")
         galbot_interface_config.modules_manager.enabled_modules.append("head")
         galbot_interface_config.modules_manager.enabled_modules.append("chassis")
+        galbot_interface_config.modules_manager.enabled_modules.append("front_head_camera")
 
         galbot_interface_config.right_arm.joint_names = [
             f"{robot_name}/right_arm_joint1",
@@ -234,8 +265,30 @@ class environment():
         if left_arm_ready and right_arm_ready and leg_ready and head_ready:
             self.pose_initialized = True
 
-    # TODO: write Walk in 4 directions and yaw rotation left/right
- 
+    def observe(self):
+        # method to observe the environment
+        # get sensor data, camera feed etc.
+        pass
+
+    def step(self):
+        # method to customize the step function?
+        pass
+
+    def is_done(self):
+        # method to check if the environment is done?
+        # e.g. if the robot has reached a goal or completed a task
+        return False
+    
+    def reset(self):
+        # method to reset the environment to its initial state?
+        # e.g. reset robot position, clear sensor data etc.
+        pass
+
+    def reward_calculation(self):
+        # method to calculate the reward based on the robot's actions and state?
+        # e.g. if the robot successfully navigates to a target position, it gets a positive reward
+        return 0.0
+
     def main(self):
 
         self.setup_sim()
@@ -258,7 +311,27 @@ class environment():
 
         # Run the display loop
         while True:
-            self.simulator.step()
+            self.simulator.step(7)
+
+            self.rgb_data = self.interface.front_head_camera.get_rgb()
+            self.depth_data = self.interface.front_head_camera.get_depth()
+
+            # Process depth data for visualization
+            self.depth_data = preprocess_depth(
+                self.depth_data,
+                scale=1000,      # Convert m to mm
+                min_value=0.0,
+                max_value=3 * 1000,  # 3m to mm
+                data_type=np.uint16,
+            )
+
+            # Display images
+            cv2.imshow("RGB Camera", cv2.cvtColor(self.rgb_data, cv2.COLOR_RGB2BGR))
+            cv2.imshow("Depth Camera", self.depth_data)
+
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                cv2.destroyAllWindows()
+                break
 
         # Close the simulator
         self.simulator.close()
