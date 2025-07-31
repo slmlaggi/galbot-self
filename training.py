@@ -408,7 +408,9 @@ def train_ppo_navigation():
                     break
             
             # Determine if episode was successful (goal reached)
-            success = info.get('distance_to_goal', float('inf')) < 0.15
+            # Get distance to goal from the last observation (index 5)
+            dist_to_goal = state[5] if len(state) > 5 else float('inf')
+            success = dist_to_goal < 0.15
             
             manager.log_episode(episode, episode_reward, episode_length, success)
             
@@ -478,7 +480,10 @@ def test_trained_model(model_path, num_episodes=10, headless=False):
             if done:
                 break
         
-        success = info.get('distance_to_goal', float('inf')) < 0.15
+        # Determine if episode was successful (goal reached)
+        # Get distance to goal from the last observation (index 5)
+        dist_to_goal = state[5] if len(state) > 5 else float('inf')
+        success = dist_to_goal < 0.15
         if success:
             successes += 1
             

@@ -47,9 +47,6 @@ class IoaiNavEnv:
         ### PPO Variables
         self.reward = 0 # float 0-1
         self.done = False
-        
-        # Initialize tracking variables
-        self.previousDistance = self.distBetween(self.startPoint, self.endPoint)
 
         ### Sim setup
         self._setup_simulator(self.headless)
@@ -108,127 +105,126 @@ class IoaiNavEnv:
         self.interface.chassis.follow_trajectory(joint_trajectory)
     
     def reset(self):
-        """Reset environment to initial state"""
-        # Reset episode variables
-        self.done = False
-        self.actionSteps = 0
-        
-        # Generate new random start and end points
-        random.seed(self.seed + self.actionSteps)  # Add variation each episode
-        while True:
-            self.startPoint = [random.uniform(-2, 4), random.uniform(-3, 3)]
-            self.endPoint = [random.uniform(-2, 4), random.uniform(-3, 3)]
-            if self.distBetween(self.startPoint, self.endPoint) >= 1.5:
-                break
 
-        printEnv("Moving robot back to start...")
-        
-        # Clear movement queue
-        if len(self.fifoPath) != 0:
+        # move robot back to start position
+        self.done = False
+
+        # time.sleep(3)
+
+        printEnv("moving robot back to start...")
+        if (len(self.fifoPath) != 0):
+            # clear fifo queue
             self.fifoPath = []
         self.fifoPath.append(self.computeRobotPositionRelative())
-        self.fifoPath.append([self.startPoint[0], self.startPoint[1], 0])
+        self.fifoPath.append([self.startPoint[0],self.startPoint[1],0]) # append start position to queue
 
-        # Reset robot position
-        self.interface.chassis.set_joint_positions([0, 0, 0], True)
-        
-        # Wait for robot to reach start position
+        self.interface.chassis.set_joint_positions([0,0,0],True)
         stepCount = self.simulator.get_step_count()
         attempts = 0
-        max_reset_steps = 300  # Reduced from 500 for faster resets
-        
-        while not self.check_movement_complete([self.startPoint[0], self.startPoint[1], 0], 0.1):
-            self.simulator.step()
-            
-            if (max_reset_steps <= (self.simulator.get_step_count() - stepCount) and attempts < 5):
-                printEnv("Reset taking too long, trying again...")
-                self.interface.chassis.set_joint_positions([0, 0, 0], True)
-                stepCount = self.simulator.get_step_count()
-                attempts += 1
-            elif attempts >= 5:
-                printEnv("Hard reset required - simulation reset")
-                self.simulator.reset()
-                break
-                
-        self.stepOffset = self.simulator.get_step_count()
-        
-        # Reset tracking variables
-        self.previousDistance = self.distBetween([self.startPoint[0], self.startPoint[1]], self.endPoint)
-        
-        printEnv("Environment reset complete")
-        return self.observation()
+        # while(not self.check_movement_complete([self.startPoint[0], self.startPoint[1],0], 0.1)):
+        #     self.simulator.step()
+        #     
+        #     if (500 <= (self.simulator.get_step_count()-stepCount)):
+        #         # sim has stalfled for some reason
+        #         self.simulator.reset()
 
-    def step(self, action):
-        """
-        Execute one step in the environment
+        while(not self.check_movement_complete([self.startPoint[0], self.startPoint[1],0], 0.1)):
+                printEnv("Robot is at: " + str(self.computeRobotPositionRelative()))
+                printEnv("Chassis relative is at: " + str(self.interface.chassis.get_joint_positions()))
+                printEnv("Goal is: " + str(self.startPoint))
+                # loop until the robot reaches the start position
+                self.simulator.step()
+                if (500 <= (self.simulator.get_step_count()-stepCount) and attempts < 10):
+                    # if it wasn't moved for whatever reason after 300 steps
+                    # DO IT AGAIN
+                    print("trying again...")
+                    self.interface.chassis.set_joint_positions([0,0,0],True)
+                    stepCount = self.simulator.get_step_count()
+                    attempts += 1
+                elif(10 <= attempts):
+                    # worst case reset the simulation entirely
+                    self.simulator.reset() 
+                    # TODO: this will result in a crash, rely on hypervisor
+        self.stepOffset = self.simulator.get_step_count()
+
+        # for i in range(0,2):
+        #     # repeat this step several times to ensure robot reaches start point
+        #     
+        #     self.interface.chassis.set_joint_positions([0,0,0],True)
+        #     self.fifoPath.append([self.startPoint[0],self.startPoint[1],0])
+        #     while(len(self.fifoPath) != 0):
+        #         # loop until the robot reaches the start position
+        #         self.simulator.step()
+        #     self.stepOffset = self.simulator.get_step_count()
         
-        Args:
-            action: Integer 0-5 representing movement direction
-            
-        Returns:
-            observation, reward, done, info
-        """        
-        # Movement setup
-        if len(self.fifoPath) == 0:
+        self.actionSteps = 0
+        self.done = False
+        # time.sleep(1)
+        printEnv("simulation ready")
+        
+        return self.observation() # send observation
+        # self.moveForward(4)
+        # self.moveBackwards(2)
+        # self.moveLeft(3)
+        # self.moveRight(6)
+        # self.shiftYaw(math.pi/2)
+        # self.moveForward(1)
+
+    def step(self, number):
+        
+        # movement setup
+        if (len(self.fifoPath) == 0):
             self.fifoPath.append(self.computeRobotPositionRelative())
         
-        globalStepDistance = 0.2  # Must be greater than tolerance (0.1)
+        globalStepDistance = 0.2 #1.75 ## must be greater than tolerance(0.1)
 
-        # Execute action
-        action_map = {
-            0: ("moveForward", "forwards"),
-            1: ("moveBackwards", "backwards"), 
-            2: ("moveLeft", "left"),
-            3: ("moveRight", "right"),
-            4: ("shiftYaw", "yaw shift positive"),
-            5: ("shiftYaw", "yaw shift negative")
-        }
-        
-        if action in action_map:
-            method_name, action_desc = action_map[action]
-            if action == 4:
-                getattr(self, method_name)(globalStepDistance)
-            elif action == 5:
-                getattr(self, method_name)(-globalStepDistance)
-            else:
-                getattr(self, method_name)(globalStepDistance)
-            printEnv(action_desc)
-        else:
-            printEnv(f"Invalid action: {action}")
-            
+        # switch case
+        match number:
+            case 0:
+                self.moveForward(globalStepDistance)
+                printEnv("forwards")
+            case 1:
+                self.moveBackwards(globalStepDistance)
+                printEnv("backwards")
+            case 2:
+                self.moveLeft(globalStepDistance)
+                printEnv("left")
+            case 3:
+                self.moveRight(globalStepDistance)
+                printEnv("right")
+            case 4:
+                self.shiftYaw(globalStepDistance)
+                printEnv("yaw shift positive")
+            case 5:
+                self.shiftYaw(-globalStepDistance)
+                printEnv("yaw shift negative")
         self.moving = True
 
-        # Step simulation until robot stops moving
-        startTime = self.simulator.get_step_count() - self.stepOffset
-        timeout_steps = 300  # Reduced from 500 for faster training
-        
-        while self.moving:
-            if timeout_steps <= ((self.simulator.get_step_count() - self.stepOffset) - startTime):
-                # Movement took too long - likely hit wall or stuck
-                printEnv("Movement timeout - robot may have hit obstacle")
-                if self.actionSteps == 0:
-                    # Reset if this is the first action
-                    return self.reset(), 0, True, self.info()
+        # step the simulation until the robot stops moving
+        startTime = self.simulator.get_step_count()-self.stepOffset
+        while (self.moving):
+            if (500 <= ((self.simulator.get_step_count()-self.stepOffset)-startTime)): # movement took more than 200 steps
+                # something is probably wrong
+                # ie robot has hit a wall
+                # robot has likely hit the wall, punish with reward 0, return done state
+                if (self.actionSteps == 0):
+                    # something went wrong with the reset...
+                    self.reset() # try again
                 else:
-                    # End episode with penalty
-                    self.done = True
-                    return self.observation(), -1.0, True, self.info()
+                    return self.observation(), 0, True, [] # return state information  
             self.simulator.step()
 
-        self.actionSteps += 1
-        printEnv(f"Action {self.actionSteps} complete. Sim time: {self.simulator.get_step_count() - self.stepOffset}")
+        self.actionSteps+=1
+        printEnv("Sim time(steps): " + str(self.simulator.get_step_count()-self.stepOffset))
         
-        # Check episode termination conditions
-        if self.actionSteps >= 60:  # Max steps per episode
+        # sim ran out of time
+        if (60 <= self.actionSteps):
             self.done = True
-            printEnv("Episode ended: Maximum steps reached")
-            
-        if self.goalReached():
-            printEnv("Episode ended: Goal reached!")
-            
-        # Calculate reward and return step results
-        reward = self.rewardCalculation()
-        return self.observation(), reward, self.done, self.info()
+        # goal was reached
+        if (self.goalReached()):
+            self.done = True
+        # return |     state     |       reward calc       |   done?  |
+        return self.observation(), self.rewardCalculation(), self.done, [] # return state information
 
         
         
@@ -600,96 +596,49 @@ class IoaiNavEnv:
             # self.simulator.remove_physics_callback("follow_path_callback")
 
     def goalReached(self):
-        """Check if robot has reached the goal within tolerance"""
-        tolerance = 0.15  # Slightly increased tolerance for more robust goal detection
+        tolerance = 0.1
         robotLocation = self.computeRobotPositionRelative()
-        distance_to_goal = self.distBetween([robotLocation[0], robotLocation[1]], self.endPoint)
-        
-        if distance_to_goal < tolerance:
+        if (self.distBetween([robotLocation[0],robotLocation[1]], self.endPoint) < tolerance):
             self.done = True
-            printEnv(f"Goal reached! Distance: {distance_to_goal:.3f}")
-            return True
-        return False
 
 
     def rewardCalculation(self):
-        """
-        Calculate reward based on:
-        1. Distance to goal (primary reward)
-        2. Step efficiency penalty
-        3. Goal reached bonus
-        4. Wall collision penalty
-        
-        Returns a reward between -1 and 10 (with 10 being goal reached)
-        """
+        ### https://www.desmos.com/calculator/0e36419059
+
+        # distance between start and finish 
+        dist = self.distBetween(self.startPoint,self.endPoint)
+
         robotLocation = self.computeRobotPositionRelative()
-        
-        # Distance from robot to goal
-        robotToGoal = self.distBetween(self.endPoint, [robotLocation[0], robotLocation[1]])
-        
-        # Base distance reward (normalized by initial distance)
-        initialDistance = self.distBetween(self.startPoint, self.endPoint)
-        distanceReward = max(0, 1 - (robotToGoal / initialDistance))
-        
-        # Step efficiency penalty (encourage fewer steps)
-        stepPenalty = -0.01 * self.actionSteps
-        
-        # Goal reached bonus
-        goalBonus = 0
-        if self.goalReached():
-            goalBonus = 10.0 - (0.1 * self.actionSteps)  # Bonus decreases with more steps
-            
-        # Wall collision penalty (if robot hits boundaries)
-        wallPenalty = 0
-        if (robotLocation[0] < -3.5 or robotLocation[0] > 5.5 or 
-            robotLocation[1] < -4.5 or robotLocation[1] > 4.5):
-            wallPenalty = -2.0
-            self.done = True  # End episode on wall collision
-            
-        # Previous distance for progress tracking
-        if not hasattr(self, 'previousDistance'):
-            self.previousDistance = robotToGoal
-            
-        # Progress reward (positive if getting closer, negative if moving away)
-        progressReward = 0.5 * (self.previousDistance - robotToGoal)
-        self.previousDistance = robotToGoal
-        
-        total_reward = distanceReward + stepPenalty + goalBonus + wallPenalty + progressReward
-        return np.clip(total_reward, -1.0, 10.0)
+
+        # print("robot location: " + str(robotLocation))
+        robotToStart = self.distBetween(self.startPoint,[robotLocation[0],robotLocation[1]])
+        robotToFinish = self.distBetween(self.endPoint, [robotLocation[0],robotLocation[1]])
+
+        # print("start to end:" + str(dist))
+
+        # print("start to robot: " + str(robotToStart))
+        # print("robot to end: " + str(robotToFinish))
+
+        totalDistance = robotToStart+robotToFinish
+        # print("total distance: " + str(totalDistance))
+
+        return 1 - (robotToFinish/dist)
     
     def observation(self):
-        """
-        Return current environment observation
-        
-        Returns:
-            np.array: [robot_x, robot_y, robot_yaw, goal_x, goal_y, distance_to_goal, normalized_steps]
-        """
         robotLocation = self.computeRobotPositionRelative()
-        distance_to_goal = self.distBetween([robotLocation[0], robotLocation[1]], self.endPoint)
-        normalized_steps = self.actionSteps / 60.0  # Normalize by max steps
         
-        obs = np.array([
-            robotLocation[0], 
-            robotLocation[1], 
-            robotLocation[2],  # yaw
-            self.endPoint[0],
-            self.endPoint[1],
-            distance_to_goal,
-            normalized_steps
-        ], dtype=np.float32)
+        # Calculate distance to goal
+        dist_to_goal = self.distBetween([robotLocation[0], robotLocation[1]], self.endPoint)
         
-        return obs
+        # Calculate normalized steps (current steps / max steps)
+        normalized_steps = self.actionSteps / 60.0  # 60 is the max action steps
+
+        ########  robot x coord  |  robot y coord  | robot yaw value |    end goal x   | end goal y | dist_to_goal | normalized_steps
+        return [ robotLocation[0], robotLocation[1], robotLocation[2], self.endPoint[0], self.endPoint[1], dist_to_goal, normalized_steps]
     
     def info(self):
-        """Return additional info about the environment state"""
-        robotLocation = self.computeRobotPositionRelative()
-        return {
-            'sim_steps': self.simulator.get_step_count(),
-            'episode_steps': self.actionSteps,
-            'robot_position': robotLocation,
-            'goal_position': self.endPoint,
-            'distance_to_goal': self.distBetween([robotLocation[0], robotLocation[1]], self.endPoint)
-        }
+        ########  sim step position 
+        return [self.simulator.get_step_count()]
 
 
 if __name__ == "__main__":
