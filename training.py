@@ -93,7 +93,6 @@ class PPOCritic(nn.Module):
     def forward(self, state):
         return self.network(state)
 
-
 class PPOAgent:
     """Proximal Policy Optimization Agent"""
     
@@ -329,19 +328,19 @@ def train_ppo_navigation():
     """Main training function"""
     
     config = {
-        'total_episodes': 2000,
-        'max_steps_per_episode': 60,
-        'update_frequency': 20,  # Update every N episodes
+        'total_episodes': 1000,
+        'max_steps_per_episode': 80,  # Increased from 60 to give more time
+        'update_frequency': 10,  # Update more frequently for better learning
         'save_frequency': 100,   # Save model every N episodes
         'headless': True,        # Run simulation in headless mode for speed
         'random_seed': 42,
         
-        'lr_actor': 3e-4,
-        'lr_critic': 3e-4,
+        'lr_actor': 1e-4,        # Reduced learning rate for more stable learning
+        'lr_critic': 1e-4,       # Reduced learning rate for more stable learning
         'gamma': 0.99,
         'eps_clip': 0.2,
-        'k_epochs': 4,
-        'hidden_dim': 256,
+        'k_epochs': 8,           # More epochs for better policy updates
+        'hidden_dim': 512,       # Larger network for better representation
     }
     
     torch.manual_seed(config['random_seed'])
@@ -412,6 +411,11 @@ def train_ppo_navigation():
             dist_to_goal = state[5] if len(state) > 5 else float('inf')
             success = dist_to_goal < 0.15
             
+            # Debug information every 50 episodes
+            if episode % 50 == 0:
+                print(f"Debug Episode {episode}: Final dist_to_goal = {dist_to_goal:.3f}, "
+                      f"Episode reward = {episode_reward:.3f}, Steps = {episode_length}")
+            
             manager.log_episode(episode, episode_reward, episode_length, success)
             
             if episode % config['update_frequency'] == 0:
@@ -472,7 +476,7 @@ def test_trained_model(model_path, num_episodes=10, headless=False):
         state = env.reset()
         episode_reward = 0
         
-        for step in range(60):  # Max steps
+        for step in range(80):  # Updated max steps to match training
             action, _ = agent.select_action(state)
             state, reward, done, info = env.step(action)
             episode_reward += reward

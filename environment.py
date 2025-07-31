@@ -176,7 +176,8 @@ class IoaiNavEnv:
         if (len(self.fifoPath) == 0):
             self.fifoPath.append(self.computeRobotPositionRelative())
         
-        globalStepDistance = 0.2 #1.75 ## must be greater than tolerance(0.1)
+        globalStepDistance = 0.4  # Increased from 0.2 to allow faster movement
+        globalYawStep = 0.3  # Separate smaller step for yaw rotation (about 17 degrees)
 
         # switch case
         match number:
@@ -193,10 +194,10 @@ class IoaiNavEnv:
                 self.moveRight(globalStepDistance)
                 printEnv("right")
             case 4:
-                self.shiftYaw(globalStepDistance)
+                self.shiftYaw(globalYawStep)
                 printEnv("yaw shift positive")
             case 5:
-                self.shiftYaw(-globalStepDistance)
+                self.shiftYaw(-globalYawStep)
                 printEnv("yaw shift negative")
         self.moving = True
 
@@ -218,7 +219,7 @@ class IoaiNavEnv:
         printEnv("Sim time(steps): " + str(self.simulator.get_step_count()-self.stepOffset))
         
         # sim ran out of time
-        if (60 <= self.actionSteps):
+        if (80 <= self.actionSteps):  # Updated to match training config
             self.done = True
         # goal was reached
         if (self.goalReached()):
@@ -596,33 +597,35 @@ class IoaiNavEnv:
             # self.simulator.remove_physics_callback("follow_path_callback")
 
     def goalReached(self):
-        tolerance = 0.1
+        tolerance = 0.15  # Increased tolerance to match training success criteria
         robotLocation = self.computeRobotPositionRelative()
         if (self.distBetween([robotLocation[0],robotLocation[1]], self.endPoint) < tolerance):
             self.done = True
 
 
     def rewardCalculation(self):
-        ### https://www.desmos.com/calculator/0e36419059
+        ### Improved reward function with goal bonus and penalty prevention
 
         # distance between start and finish 
         dist = self.distBetween(self.startPoint,self.endPoint)
 
         robotLocation = self.computeRobotPositionRelative()
-
-        # print("robot location: " + str(robotLocation))
-        robotToStart = self.distBetween(self.startPoint,[robotLocation[0],robotLocation[1]])
         robotToFinish = self.distBetween(self.endPoint, [robotLocation[0],robotLocation[1]])
 
-        # print("start to end:" + str(dist))
+        # Base reward: normalized distance progress (0 to 1)
+        base_reward = max(0.0, 1 - (robotToFinish/dist))
+        
+        # Goal reached bonus
+        if robotToFinish < 0.15:
+            base_reward += 1.0  # Large bonus for reaching goal
+        
+        # Small penalty for time steps to encourage efficiency
+        time_penalty = self.actionSteps * 0.01
+        
+        # Ensure reward is never negative to avoid confusion
+        final_reward = max(0.0, base_reward - time_penalty)
 
-        # print("start to robot: " + str(robotToStart))
-        # print("robot to end: " + str(robotToFinish))
-
-        totalDistance = robotToStart+robotToFinish
-        # print("total distance: " + str(totalDistance))
-
-        return 1 - (robotToFinish/dist)
+        return final_reward
     
     def observation(self):
         robotLocation = self.computeRobotPositionRelative()
@@ -631,7 +634,7 @@ class IoaiNavEnv:
         dist_to_goal = self.distBetween([robotLocation[0], robotLocation[1]], self.endPoint)
         
         # Calculate normalized steps (current steps / max steps)
-        normalized_steps = self.actionSteps / 60.0  # 60 is the max action steps
+        normalized_steps = self.actionSteps / 80.0  # Updated to match new max steps
 
         ########  robot x coord  |  robot y coord  | robot yaw value |    end goal x   | end goal y | dist_to_goal | normalized_steps
         return [ robotLocation[0], robotLocation[1], robotLocation[2], self.endPoint[0], self.endPoint[1], dist_to_goal, normalized_steps]
